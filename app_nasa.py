@@ -303,7 +303,7 @@ if min_year == max_year:
     year_range = (min_year, max_year)
 else:
     year_range = st.sidebar.slider("Year Range:", min_year, max_year, (min_year, max_year))
-    
+
 filtered = df[
     (df["state"].isin(states_selected)) &
     (df["crop_type"].isin(crops_selected)) &
@@ -609,6 +609,7 @@ elif tab_selection == "🔍 Trend Analysis":
         yield_efficiency=("yield_efficiency", "mean"),
     ).reset_index()
 
+    # Check if we have multiple years to show timeline trends
     if len(time_data) > 1:
         st.altair_chart(
             alt.Chart(time_data).mark_line(point=True, color="#2E7D32").encode(
@@ -647,7 +648,7 @@ elif tab_selection == "🔍 Trend Analysis":
         with col_a:
             st.markdown("**Temperature Anomaly (NASA POWER vs. Average)**")
             baseline_temp = filtered["temperature"].mean()
-            anomaly_df    = filtered.groupby("year")["temperature"].mean().reset_index()
+            anomaly_df = filtered.groupby("year")["temperature"].mean().reset_index()
             anomaly_df["anomaly"] = anomaly_df["temperature"] - baseline_temp
 
             st.altair_chart(
@@ -662,7 +663,6 @@ elif tab_selection == "🔍 Trend Analysis":
                 use_container_width=True,
             )
             st.info("🔴 Red = hotter than average | 🔵 Blue = cooler than average")
-
         with col_b:
             st.markdown("**Correlation Matrix**")
             corr_matrix = filtered[
@@ -675,9 +675,9 @@ elif tab_selection == "🔍 Trend Analysis":
                 color=alt.Color("value:Q", scale=alt.Scale(scheme="redblue", domain=[-1, 1]),
                                 legend=alt.Legend(title="Correlation")),
                 tooltip=[
-                    alt.Tooltip("index",    title="Variable 1"),
+                    alt.Tooltip("index", title="Variable 1"),
                     alt.Tooltip("variable", title="Variable 2"),
-                    alt.Tooltip("value",    title="Correlation", format=".2f"),
+                    alt.Tooltip("value", title="Correlation", format=".2f"),
                 ],
             ).properties(height=350)
 
@@ -688,73 +688,117 @@ elif tab_selection == "🔍 Trend Analysis":
             st.altair_chart(heatmap + text_layer, use_container_width=True)
             st.info("🟦 +1 = strong positive | 🟥 −1 = strong negative | ⬜ 0 = no relationship")
 
-        # Scatter plots
-        st.markdown("---")
-        st.markdown('<div class="sub-header">Climate Impact on Yield (NASA POWER Data)</div>', unsafe_allow_html=True)
+    else:
+        # Fallback view for single-year slices
+        st.info(
+            "ℹ️ Historical timeline trends are unavailable because the filtered selection contains only 1 year of data.")
 
-        col1, col2 = st.columns(2)
-        with col1:
-            scatter = explore_filtered.dropna(subset=["temperature", "yield_efficiency"])
-            if len(scatter) > 2:
-                base = alt.Chart(scatter).mark_circle(size=60).encode(
-                    x=alt.X("temperature:Q", title="Temperature — NASA (°C)", scale=alt.Scale(zero=False)),
-                    y=alt.Y("yield_efficiency:Q", title="Yield Efficiency (MT/Ha)"),
-                    color=alt.Color("crop_type:N"),
-                    tooltip=["state", "crop_type", "year", "temperature", "yield_efficiency"],
-                ).properties(title="Temperature vs Yield", height=400)
+        st.markdown("---")
+        st.markdown('<div class="sub-header">Cross-Sectional Climate Heatmap</div>', unsafe_allow_html=True)
+
+        # We can still compute a correlation matrix across different states/crops for this year
+        valid_corr_cols = [c for c in ["temperature", "humidity", "production", "yield_efficiency"] if
+                           c in filtered.columns]
+        if len(filtered) > 2 and len(valid_corr_cols) > 1:
+            corr_matrix = filtered[valid_corr_cols].corr().reset_index().melt(id_vars="index")
+            heatmap = alt.Chart(corr_matrix).mark_rect().encode(
+                x=alt.X("index:N", title=None),
+                y=alt.Y("variable:N", title=None),
+                color=alt.Color("value:Q", scale=alt.Scale(scheme="redblue", domain=[-1, 1])),
+                tooltip=["index", "variable", alt.Tooltip("value", format=".2f")]
+            ).properties(height=300)
+            st.altair_chart(heatmap + heatmap.mark_text().encode(text=alt.Text("value:Q", format=".2f")),
+                            use_container_width=True)
+
+    # ── Scatter plots & Climate Impact on Yield ─────────────────────────────
+    st.markdown("---")
+    st.markdown('<div class="sub-header">Climate Impact on Yield (NASA POWER Data)</div>', unsafe_allow_html=True)
+
+    # Clean missing variables before plotting scatter distributions
+    scatter = explore_filtered.dropna(subset=["temperature", "yield_efficiency"])
+    scatter_h = explore_filtered.dropna(subset=["humidity", "yield_efficiency"])
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if len(scatter) >= 2:
+            base = alt.Chart(scatter).mark_circle(size=60).encode(
+                x=alt.X("temperature:Q", title="Temperature — NASA (°C)", scale=alt.Scale(zero=False)),
+                y=alt.Y("yield_efficiency:Q", title="Yield Efficiency (MT/Ha)"),
+                color=alt.Color("crop_type:N"),
+                tooltip=["state", "crop_type", "year", "temperature", "yield_efficiency"],
+            ).properties(title="Temperature vs Yield", height=400)
+
+            # Regression line requires at least 3 distinct variance distributions
+            if len(scatter) > 2 and scatter["temperature"].nunique() > 1:
                 reg = base.transform_regression("temperature", "yield_efficiency").mark_line(color="red", strokeWidth=3)
                 st.altair_chart(base + reg, use_container_width=True)
-                corr = scatter["temperature"].corr(scatter["yield_efficiency"])
+            else:
+                st.altair_chart(base, use_container_width=True)
+
+            corr = scatter["temperature"].corr(scatter["yield_efficiency"])
+            if not pd.isna(corr):
                 st.metric("Temp–Yield Correlation (NASA)", f"{corr:.3f}", delta_color="off")
-
-        with col2:
-            scatter_h = explore_filtered.dropna(subset=["humidity", "yield_efficiency"])
-            if len(scatter_h) > 2:
-                base_h = alt.Chart(scatter_h).mark_circle(size=60).encode(
-                    x=alt.X("humidity:Q", title="Humidity — NASA (%)", scale=alt.Scale(zero=False)),
-                    y=alt.Y("yield_efficiency:Q", title="Yield Efficiency (MT/Ha)"),
-                    color=alt.Color("crop_type:N"),
-                    tooltip=["state", "year", "humidity", "yield_efficiency"],
-                ).properties(title="Humidity vs Yield", height=400)
-                reg_h = base_h.transform_regression("humidity", "yield_efficiency").mark_line(color="blue", strokeWidth=3)
-                st.altair_chart(base_h + reg_h, use_container_width=True)
-                corr_h = scatter_h["humidity"].corr(scatter_h["yield_efficiency"])
-                st.metric("Humidity–Yield Correlation (NASA)", f"{corr_h:.3f}", delta_color="off")
-
-        # Heat sensitivity
-        st.markdown("---")
-        st.markdown('<div class="sub-header">Heat Sensitivity Analysis</div>', unsafe_allow_html=True)
-        st.caption("Yield change (MT/Ha) per +1°C rise in temperature. Red = at-risk crop.")
-
-        safe = explore_filtered.dropna(subset=["temperature", "yield_efficiency"])
-        safe = safe.replace([np.inf, -np.inf], np.nan).dropna(subset=["yield_efficiency"])
-        sens_rows = []
-
-        for crop in safe["crop_type"].unique():
-            sub = safe[safe["crop_type"] == crop]
-            if len(sub) > 5:
-                try:
-                    reg = LinearRegression().fit(sub[["temperature"]], sub["yield_efficiency"])
-                    sens_rows.append({"Crop": crop, "Sensitivity": reg.coef_[0]})
-                except Exception:
-                    pass
-
-        if sens_rows:
-            sens_df = pd.DataFrame(sens_rows)
-            st.altair_chart(
-                alt.Chart(sens_df).mark_bar().encode(
-                    x=alt.X("Crop:N", sort="y"),
-                    y=alt.Y("Sensitivity:Q", title="Yield Change per +1°C (MT/Ha)"),
-                    color=alt.condition(
-                        alt.datum.Sensitivity < 0, alt.value("#d32f2f"), alt.value("#388e3c")
-                    ),
-                    tooltip=["Crop", alt.Tooltip("Sensitivity", format=".4f")],
-                ).properties(height=350),
-                use_container_width=True,
-            )
-            st.info("🔴 Down (red) = yield drops when hotter | 🟢 Up (green) = heat-tolerant crop")
         else:
-            st.warning("Not enough clean data to calculate heat sensitivity.")
+            st.caption("Not enough data items to render Temperature vs Yield distribution.")
+
+    with col2:
+        if len(scatter_h) >= 2:
+            base_h = alt.Chart(scatter_h).mark_circle(size=60).encode(
+                x=alt.X("humidity:Q", title="Humidity — NASA (%)", scale=alt.Scale(zero=False)),
+                y=alt.Y("yield_efficiency:Q", title="Yield Efficiency (MT/Ha)"),
+                color=alt.Color("crop_type:N"),
+                tooltip=["state", "year", "humidity", "yield_efficiency"],
+            ).properties(title="Humidity vs Yield", height=400)
+
+            if len(scatter_h) > 2 and scatter_h["humidity"].nunique() > 1:
+                reg_h = base_h.transform_regression("humidity", "yield_efficiency").mark_line(color="blue",
+                                                                                              strokeWidth=3)
+                st.altair_chart(base_h + reg_h, use_container_width=True)
+            else:
+                st.altair_chart(base_h, use_container_width=True)
+
+            corr_h = scatter_h["humidity"].corr(scatter_h["yield_efficiency"])
+            if not pd.isna(corr_h):
+                st.metric("Humidity–Yield Correlation (NASA)", f"{corr_h:.3f}", delta_color="off")
+        else:
+            st.caption("Not enough data items to render Humidity vs Yield distribution.")
+
+    # ── Heat Sensitivity Analysis ──────────────────────────────────────────
+    st.markdown("---")
+    st.markdown('<div class="sub-header">Heat Sensitivity Analysis</div>', unsafe_allow_html=True)
+    st.caption("Yield change (MT/Ha) per +1°C rise in temperature. Red = at-risk crop.")
+
+    safe = explore_filtered.dropna(subset=["temperature", "yield_efficiency"])
+    safe = safe.replace([np.inf, -np.inf], np.nan).dropna(subset=["yield_efficiency"])
+    sens_rows = []
+
+    # Requires data spread across different climate points to build regression slopes
+    for crop in safe["crop_type"].unique():
+        sub = safe[safe["crop_type"] == crop]
+        if len(sub) > 2 and sub["temperature"].nunique() > 1:
+            try:
+                reg = LinearRegression().fit(sub[["temperature"]], sub["yield_efficiency"])
+                sens_rows.append({"Crop": crop, "Sensitivity": reg.coef_[0]})
+            except Exception:
+                pass
+
+    if sens_rows:
+        sens_df = pd.DataFrame(sens_rows)
+        st.altair_chart(
+            alt.Chart(sens_df).mark_bar().encode(
+                x=alt.X("Crop:N", sort="y"),
+                y=alt.Y("Sensitivity:Q", title="Yield Change per +1°C (MT/Ha)"),
+                color=alt.condition(
+                    alt.datum.Sensitivity < 0, alt.value("#d32f2f"), alt.value("#388e3c")
+                ),
+                tooltip=["Crop", alt.Tooltip("Sensitivity", format=".4f")],
+            ).properties(height=350),
+            use_container_width=True,
+        )
+        st.info("🔴 Down (red) = yield drops when hotter | 🟢 Up (green) = heat-tolerant crop")
+    else:
+        st.warning(
+            "⚠️ Linear calculations require variations in temperature data across records. Try expanding your dashboard filter ranges to multiple states or years.")
 
 # =============================================================================
 # TAB 3 — CLIMATE SIMULATION
