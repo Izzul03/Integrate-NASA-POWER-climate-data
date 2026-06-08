@@ -78,7 +78,20 @@ def clean_numeric(series: pd.Series) -> pd.Series:
 
 
 def normalise_state(name: str) -> str:
-    return str(name).strip().title()
+    if pd.isna(name):
+        return name
+
+    name = str(name).strip().title()
+
+    mapping = {
+        "Pulau Pinang": "Pulau Pinang",
+        "Penang": "Pulau Pinang",
+        "Wp Kuala Lumpur": "W.P. Kuala Lumpur",
+        "Kuala Lumpur": "W.P. Kuala Lumpur",
+        "Labuan": "W.P. Labuan",
+    }
+
+    return mapping.get(name, name)
 
 
 # -------------------------
@@ -177,20 +190,14 @@ def load_data():
     #    These will be replaced by real NASA POWER values below.
     df = df.drop(columns=[c for c in ["temperature", "humidity"] if c in df.columns])
 
-    # Parse dates to year & month
+    # ── 6. Parse dates → year & month ───────────────────────────────────
     if "date" in df.columns:
-        # Try multiple formats for cross-environment compatibility
-        df["date"] = pd.to_datetime(df["date"], format="%d/%m/%y", errors="coerce")
-        if df["date"].notna().sum() < len(df) * 0.5:
-            df["date"] = pd.to_datetime(df["date"], errors="coerce", dayfirst=True)
+        df["date"]  = pd.to_datetime(df["date"], format="%d/%m/%y", errors="coerce")
         df["year"]  = df["date"].dt.year.fillna(2017).astype(int)
         df["month"] = df["date"].dt.month.fillna(1).astype(int)
 
     if "year" not in df.columns:
         df["year"] = 2017
-
-    # Clip to valid range in case of parsing issues
-    df["year"] = df["year"].clip(2017, 2022)
 
     # ── 7. Merge NASA POWER climate data ────────────────────────────────
     nasa = load_nasa_climate()
@@ -206,8 +213,11 @@ def load_data():
             nasa[["state", "year", "temperature", "humidity"]],
             on=["state", "year"],
             how="left",
+            validate="m:1"
         )
 
+        df["temperature"] = df["temperature"].fillna(df["temperature"].median())
+        df["humidity"] = df["humidity"].fillna(df["humidity"].median())
         matched   = df["temperature"].notna().sum()
         unmatched = df["temperature"].isna().sum()
 
@@ -294,11 +304,6 @@ crops_selected  = st.sidebar.multiselect("Select Crop Type(s):", options=crop_op
 
 min_year   = int(df["year"].min()) if df["year"].notnull().any() else 2017
 max_year   = int(df["year"].max()) if df["year"].notnull().any() else 2022
-
-# Guard against min == max (e.g. date parsing produced only one year)
-if min_year == max_year:
-    max_year = min_year + 1
-
 year_range = st.sidebar.slider("Year Range:", min_year, max_year, (min_year, max_year))
 
 filtered = df[
@@ -308,7 +313,8 @@ filtered = df[
 ].copy()
 
 if filtered.empty:
-    st.warning("No data after applying filters. Please adjust your selections.")
+    st.error("No data available after filters. Try different selections.")
+    st.info("Tip: Expand year range or select more states/crops.")
     st.stop()
 
 # Additional computed columns
@@ -596,7 +602,9 @@ elif tab_selection == "🔍 Trend Analysis":
         explore_filtered = explore_filtered[explore_filtered["crop_type"] == explore_crop]
 
     if explore_filtered.empty:
-        st.warning("No data for selected filters.")
+        st.warning("No matching data — showing overview instead.")
+
+        st.write(filtered.groupby("state")["production"].sum().head())
         st.stop()
 
     time_data = explore_filtered.groupby("year").agg(
@@ -736,7 +744,7 @@ elif tab_selection == "🔍 Trend Analysis":
                 except Exception:
                     pass
 
-        if sens_rows:
+        if len(sens_rows) > 0:
             sens_df = pd.DataFrame(sens_rows)
             st.altair_chart(
                 alt.Chart(sens_df).mark_bar().encode(
