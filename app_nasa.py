@@ -294,10 +294,16 @@ crop_options  = sorted(df["crop_type"].dropna().unique())
 states_selected = st.sidebar.multiselect("Select State(s):",  options=state_options, default=state_options)
 crops_selected  = st.sidebar.multiselect("Select Crop Type(s):", options=crop_options,  default=crop_options)
 
-min_year   = int(df["year"].min()) if df["year"].notnull().any() else 2017
-max_year   = int(df["year"].max()) if df["year"].notnull().any() else 2022
-year_range = st.sidebar.slider("Year Range:", min_year, max_year, (min_year, max_year))
+min_year = int(df["year"].min()) if df["year"].notnull().any() else 2017
+max_year = int(df["year"].max()) if df["year"].notnull().any() else 2022
 
+# Fix: Prevent Streamlit API Exception when there's only 1 year available
+if min_year == max_year:
+    st.sidebar.markdown(f"**Year Range:** {min_year}")
+    year_range = (min_year, max_year)
+else:
+    year_range = st.sidebar.slider("Year Range:", min_year, max_year, (min_year, max_year))
+    
 filtered = df[
     (df["state"].isin(states_selected)) &
     (df["crop_type"].isin(crops_selected)) &
