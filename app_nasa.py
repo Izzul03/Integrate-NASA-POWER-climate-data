@@ -177,14 +177,20 @@ def load_data():
     #    These will be replaced by real NASA POWER values below.
     df = df.drop(columns=[c for c in ["temperature", "humidity"] if c in df.columns])
 
-    # ── 6. Parse dates → year & month ───────────────────────────────────
+    # Parse dates to year & month
     if "date" in df.columns:
-        df["date"]  = pd.to_datetime(df["date"], format="%d/%m/%y", errors="coerce")
+        # Try multiple formats for cross-environment compatibility
+        df["date"] = pd.to_datetime(df["date"], format="%d/%m/%y", errors="coerce")
+        if df["date"].notna().sum() < len(df) * 0.5:
+            df["date"] = pd.to_datetime(df["date"], errors="coerce", dayfirst=True)
         df["year"]  = df["date"].dt.year.fillna(2017).astype(int)
         df["month"] = df["date"].dt.month.fillna(1).astype(int)
 
     if "year" not in df.columns:
         df["year"] = 2017
+
+    # Clip to valid range in case of parsing issues
+    df["year"] = df["year"].clip(2017, 2022)
 
     # ── 7. Merge NASA POWER climate data ────────────────────────────────
     nasa = load_nasa_climate()
@@ -288,6 +294,11 @@ crops_selected  = st.sidebar.multiselect("Select Crop Type(s):", options=crop_op
 
 min_year   = int(df["year"].min()) if df["year"].notnull().any() else 2017
 max_year   = int(df["year"].max()) if df["year"].notnull().any() else 2022
+
+# Guard against min == max (e.g. date parsing produced only one year)
+if min_year == max_year:
+    max_year = min_year + 1
+
 year_range = st.sidebar.slider("Year Range:", min_year, max_year, (min_year, max_year))
 
 filtered = df[
