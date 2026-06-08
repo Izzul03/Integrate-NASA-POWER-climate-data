@@ -78,20 +78,7 @@ def clean_numeric(series: pd.Series) -> pd.Series:
 
 
 def normalise_state(name: str) -> str:
-    if pd.isna(name):
-        return name
-
-    name = str(name).strip().title()
-
-    mapping = {
-        "Pulau Pinang": "Pulau Pinang",
-        "Penang": "Pulau Pinang",
-        "Wp Kuala Lumpur": "W.P. Kuala Lumpur",
-        "Kuala Lumpur": "W.P. Kuala Lumpur",
-        "Labuan": "W.P. Labuan",
-    }
-
-    return mapping.get(name, name)
+    return str(name).strip().title()
 
 
 # -------------------------
@@ -213,11 +200,8 @@ def load_data():
             nasa[["state", "year", "temperature", "humidity"]],
             on=["state", "year"],
             how="left",
-            validate="m:1"
         )
 
-        df["temperature"] = df["temperature"].fillna(df["temperature"].median())
-        df["humidity"] = df["humidity"].fillna(df["humidity"].median())
         matched   = df["temperature"].notna().sum()
         unmatched = df["temperature"].isna().sum()
 
@@ -313,8 +297,7 @@ filtered = df[
 ].copy()
 
 if filtered.empty:
-    st.error("No data available after filters. Try different selections.")
-    st.info("Tip: Expand year range or select more states/crops.")
+    st.warning("No data after applying filters. Please adjust your selections.")
     st.stop()
 
 # Additional computed columns
@@ -602,9 +585,7 @@ elif tab_selection == "🔍 Trend Analysis":
         explore_filtered = explore_filtered[explore_filtered["crop_type"] == explore_crop]
 
     if explore_filtered.empty:
-        st.warning("No matching data — showing overview instead.")
-
-        st.write(filtered.groupby("state")["production"].sum().head())
+        st.warning("No data for selected filters.")
         st.stop()
 
     time_data = explore_filtered.groupby("year").agg(
@@ -744,7 +725,7 @@ elif tab_selection == "🔍 Trend Analysis":
                 except Exception:
                     pass
 
-        if len(sens_rows) > 0:
+        if sens_rows:
             sens_df = pd.DataFrame(sens_rows)
             st.altair_chart(
                 alt.Chart(sens_df).mark_bar().encode(
